@@ -19,7 +19,7 @@
 TaskHandle_t fusHandle, ctrlHandle, navHandle, fsHandle, monitorHandle;
 
 // --- INÍCIO: Variáveis para Instrumentação de Tempo Real ---
-// Usamos 'volatile' para garantir que o compilador não otimize o acesso
+//  'volatile' para garantir que o compilador não otimize o acesso
 // a estas variáveis, pois elas são modificadas em tasks e ISRs diferentes.
 volatile uint32_t fus_imu_deadline_misses = 0;
 volatile int64_t max_jitter_us = 0;
