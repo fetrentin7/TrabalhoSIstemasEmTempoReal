@@ -1,0 +1,2 @@
+source C:/esp32/TrabalhoM1RTS/hello_world/build/gdbinit/symbols
+source C:/esp32/TrabalhoM1RTS/hello_world/build/gdbinit/connect
