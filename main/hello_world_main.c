@@ -18,9 +18,7 @@
 // Handles das tasks
 TaskHandle_t fusHandle, ctrlHandle, navHandle, fsHandle, monitorHandle;
 
-// --- INÍCIO: Variáveis para Instrumentação de Tempo Real ---
-//  'volatile' para garantir que o compilador não otimize o acesso
-// a estas variáveis, pois elas são modificadas em tasks e ISRs diferentes.
+
 volatile uint32_t fus_imu_deadline_misses = 0;
 volatile int64_t max_jitter_us = 0;
 volatile uint64_t max_fs_latency_us = 0;
@@ -28,20 +26,25 @@ volatile uint64_t max_fs_latency_us = 0;
 // Variáveis de apoio para os cálculos
 static int64_t last_fus_imu_activation_time = -1;
 static volatile uint64_t fs_trigger_time_us = 0;
-// --- FIM: Variáveis de Instrumentação ---
 
 // ---------------------- TASKS -------------------------
 
 void FUS_IMU(void *pvParameter) {
     TickType_t xLastWakeTime = xTaskGetTickCount();
     
+    // Calcula o incremento de tempo uma vez.
+    // Se a conversão de ms para ticks resultar em 0, força para 1 para evitar o crash.
+    TickType_t xTimeIncrement = pdMS_TO_TICKS(FUS_IMU_PERIOD_MS);
+    if (xTimeIncrement == 0) {
+        xTimeIncrement = 1;
+    }
+  
     while(1) {
-        // vTaskDelayUntil garante a periodicidade, executando esta linha a cada 5ms.
-        vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(FUS_IMU_PERIOD_MS));
+        // Usa o valor pré-calculado e seguro para o delay.
+        vTaskDelayUntil(&xLastWakeTime, xTimeIncrement);
         
         uint64_t start = esp_timer_get_time();
 
-        // --- INÍCIO: INSTRUMENTAÇÃO (Jitter) ---
         // Jitter é a variação no tempo de ativação da task.
         if (last_fus_imu_activation_time != -1) {
             int64_t period_us = start - last_fus_imu_activation_time;
@@ -54,7 +57,6 @@ void FUS_IMU(void *pvParameter) {
         last_fus_imu_activation_time = start;
         // --- FIM: INSTRUMENTAÇÃO ---
 
-        // Simula fusão sensorial (printf removido para não afetar a medição de tempo)
         // printf("[FUS_IMU] Nova amostra inercial\n");
 
         // Notifica controle de atitude
@@ -63,19 +65,19 @@ void FUS_IMU(void *pvParameter) {
         uint64_t end = esp_timer_get_time();
         uint64_t exec_time_us = end - start;
 
-        // --- INÍCIO: INSTRUMENTAÇÃO (Miss de Deadline) ---
-        // Se o tempo de execução exceder o período, contamos como um "miss".
+        // Miss de Deadline
+        // Se o tempo de execução exceder o período, miss
         if (exec_time_us > (FUS_IMU_PERIOD_MS * 1000)) {
             fus_imu_deadline_misses++;
         }
-        // --- FIM: INSTRUMENTAÇÃO ---
+        
     }
 }
 
 void CTRL_ATT(void *pvParameter) {
     while(1) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY); // espera FUS_IMU
-        // Simula controle de atitude (printf removido)
+        //Sprintf("[CTRL_ATT] Novo comando de controle\n");
     }
 }
 
@@ -96,7 +98,7 @@ void FS_TASK(void *pvParameter) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY); // ativada por ISR
         
         // --- INÍCIO: INSTRUMENTAÇÃO (Latência) ---
-    
+        // Mede o tempo exato em que a task começou a executar.
         uint64_t fs_start_time_us = esp_timer_get_time();
         
         // Calcula a latência se o tempo do gatilho foi registrado.
@@ -165,7 +167,6 @@ static void tp_isr(void *arg) {
 // ---------------------- APP MAIN -------------------------
 
 void app_main(void) {
-    // Init touch pads (versão mais robusta)
     ESP_ERROR_CHECK(touch_pad_init());
     touch_pad_set_fsm_mode(TOUCH_FSM_MODE_TIMER);
     touch_pad_set_voltage(TOUCH_HVOLT_2V7, TOUCH_LVOLT_0V5, TOUCH_HVOLT_ATTEN_1V);

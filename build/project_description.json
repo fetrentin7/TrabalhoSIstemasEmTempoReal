@@ -1,7 +1,7 @@
 {
     "version":            "1.2",
     "project_name":       "hello_world",
-    "project_version":    "1",
+    "project_version":    "70cc987-dirty",
     "project_path":       "C:/esp32/TrabalhoM1RTS/hello_world",
     "idf_path":           "C:/Users/Fernando/esp/v5.5.1/esp-idf",
     "build_dir":          "C:/esp32/TrabalhoM1RTS/hello_world/build",
