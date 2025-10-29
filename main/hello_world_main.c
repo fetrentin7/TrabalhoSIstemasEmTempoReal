@@ -6,6 +6,8 @@
 #include "driver/touch_pad.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "wifi.h"
+
 
 #define TOUCH_NAV   2  // Touch B -> Navegação
 #define TOUCH_TLM   3  // Touch C -> Telemetria
@@ -167,6 +169,9 @@ static void tp_isr(void *arg) {
 // ---------------------- APP MAIN -------------------------
 
 void app_main(void) {
+
+    nvs_flash_init();
+    wifi_init_sta();
     ESP_ERROR_CHECK(touch_pad_init());
     touch_pad_set_fsm_mode(TOUCH_FSM_MODE_TIMER);
     touch_pad_set_voltage(TOUCH_HVOLT_2V7, TOUCH_LVOLT_0V5, TOUCH_HVOLT_ATTEN_1V);
@@ -199,6 +204,9 @@ void app_main(void) {
     xTaskCreate(NAV_PLAN, "nav_plan", 4096, (void*)navQueue, 3, &navHandle);
     xTaskCreate(FS_TASK, "fs_task", 4096, NULL, 6, &fsHandle);
     xTaskCreate(MONITOR_TASK, "monitor_task", 4096, NULL, 2, &monitorHandle);
+
+ 
+    xTaskCreate(tcp_server_task, "tcp_server", 4096, NULL, 3, NULL);
 
     printf("Sistema instrumentado iniciado.\n");
 }
