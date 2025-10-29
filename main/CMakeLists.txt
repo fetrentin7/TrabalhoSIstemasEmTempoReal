@@ -1,3 +1,5 @@
-idf_component_register(SRCS "wifi.c" "hello_world_main.c"
-                       REQUIRES driver freertos esp_timer
-                       INCLUDE_DIRS ".")
+idf_component_register(
+    SRCS "hello_world_main.c"
+    INCLUDE_DIRS "."
+    REQUIRES driver esp_timer freertos network
+)

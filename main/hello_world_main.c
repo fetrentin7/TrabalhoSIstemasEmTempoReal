@@ -5,8 +5,10 @@
 #include "freertos/queue.h"
 #include "driver/touch_pad.h"
 #include "esp_log.h"
+#include "nvs_flash.h"
 #include "esp_timer.h"
-#include "wifi.h"
+#include "esp32_sntp_con.h"
+#include "tcp_udp_esp32_wifi_con.h"
 
 
 #define TOUCH_NAV   2  // Touch B -> Navegação
