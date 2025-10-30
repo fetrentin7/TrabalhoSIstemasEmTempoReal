@@ -31,17 +31,27 @@ idf_component_register(SRCS "hello_world_main.c"
 #include "esp32_sntp_con.h"
 
 
-#define WIFI_SSID "Fernando"
+#define WIFI_SSID "fernando"
 #define WIFI_PASS "fernando123"
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT      BIT1
 
-#define TCP_PORT 5000
+#define TCP_PORT 6010
 #define PC_IP   "192.168.15.5"
-#define PC_PORT 6010
+#define PC_PORT 3333
+
+// Externas para acionar tasks principais
+extern TaskHandle_t fsHandle;
+extern TaskHandle_t navHandle;
+extern QueueHandle_t navQueue;
+
+static const char *TAG_TCP = "TCP_SERVER";
 
 static const char *TAG = "NETWORK";
 static EventGroupHandle_t s_wifi_event_group;
+
+int tcp_client_sock = -1;
+
 
 /* ============================================================
  *               HANDLERS DE EVENTOS WI-FI
@@ -112,6 +122,42 @@ bool wifi_wait_connected(void)
 }
 
 /* ============================================================
+ *                ENVIO UDP SIMPLES (para MONITOR_TASK)
+ * ============================================================ */
+esp_err_t send_udp_message(const char *msg, const char *ip, int port)
+{
+    if (!msg || !ip) return ESP_FAIL;
+
+    struct sockaddr_in dest;
+    memset(&dest, 0, sizeof(dest));
+    dest.sin_family = AF_INET;
+    dest.sin_port = htons(port);
+
+    if (inet_pton(AF_INET, ip, &dest.sin_addr.s_addr) != 1) {
+        ESP_LOGE(TAG, "IP inválido: %s", ip);
+        return ESP_FAIL;
+    }
+
+    int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
+    if (sock < 0) {
+        ESP_LOGE(TAG, "Erro ao criar socket UDP");
+        return ESP_FAIL;
+    }
+
+    ssize_t sent = sendto(sock, msg, strlen(msg), 0,
+                          (struct sockaddr *)&dest, sizeof(dest));
+
+    close(sock);
+    if (sent < 0) {
+        ESP_LOGE(TAG, "Erro ao enviar UDP para %s:%d", ip, port);
+        return ESP_FAIL;
+    }
+
+    // sucesso
+    return ESP_OK;
+}
+
+/* ============================================================
  *             TAREFAS TCP / UDP (inalteradas)
  * ============================================================ */
 
@@ -134,37 +180,88 @@ static void udp_task(void *arg)
     }
 }
 
-static void tcp_server_task(void *arg)
+void tcp_server_task(void *arg)
 {
-    int listen_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
-    struct sockaddr_in addr = {0};
+    int listen_fd, sock;
+    struct sockaddr_in addr, source_addr;
+    socklen_t addr_len = sizeof(source_addr);
+
+    // Cria socket TCP
+    listen_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
+    if (listen_fd < 0) {
+        ESP_LOGE(TAG_TCP, "Erro criando socket TCP");
+        vTaskDelete(NULL);
+        return;
+    }
+
     addr.sin_family = AF_INET;
     addr.sin_port = htons(TCP_PORT);
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    bind(listen_fd, (struct sockaddr*)&addr, sizeof(addr));
-    listen(listen_fd, 1);
-    ESP_LOGI(TAG, "Servidor TCP na porta %d", TCP_PORT);
+
+    if (bind(listen_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        ESP_LOGE(TAG_TCP, "Erro no bind()");
+        close(listen_fd);
+        vTaskDelete(NULL);
+        return;
+    }
+
+    if (listen(listen_fd, 1) < 0) {
+        ESP_LOGE(TAG_TCP, "Erro no listen()");
+        close(listen_fd);
+        vTaskDelete(NULL);
+        return;
+    }
+
+    ESP_LOGI(TAG_TCP, "Servidor TCP ativo na porta %d", TCP_PORT);
 
     while (1) {
-        struct sockaddr_in6 source_addr;
-        socklen_t addr_len = sizeof(source_addr);
-        int sock = accept(listen_fd, (struct sockaddr *)&source_addr, &addr_len);
-        if (sock < 0) continue;
-        ESP_LOGI(TAG, "Cliente conectado");
+        sock = accept(listen_fd, (struct sockaddr *)&source_addr, &addr_len);
+        if (sock < 0) {
+            ESP_LOGE(TAG_TCP, "Erro no accept()");
+            continue;
+        }
 
-        const char *hello = "ESP32: conectado!\n";
-        send(sock, hello, strlen(hello), 0);
+        ESP_LOGI(TAG_TCP, "Cliente conectado!");
 
-        char rx[256];
-        while (1) {
-            int len = recv(sock, rx, sizeof(rx) - 1, 0);
-            if (len <= 0) { ESP_LOGI(TAG, "Cliente saiu"); break; }
-            rx[len] = 0;
-            ESP_LOGI(TAG, "RX: %s", rx);
+        char rx_buffer[128];
+        int len;
 
-            char tx[300];
-            snprintf(tx, sizeof(tx), "{\"ok\":true,\"echo\":\"%s\"}\n", rx);
-            send(sock, tx, strlen(tx), 0);
+        while ((len = recv(sock, rx_buffer, sizeof(rx_buffer) - 1, 0)) > 0) {
+            for (int i = 0; i < len; i++) {
+                char c = rx_buffer[i];
+
+                switch (c) {
+                    case 'f':   // Aciona FS_TASK
+                        if (fsHandle) {
+                            xTaskNotifyGive(fsHandle);
+                            ESP_LOGI(TAG_TCP, "FS_TASK acionada (comando 'f')");
+                        }
+                        break;
+
+                    case 'n':   // Aciona NAV_PLAN
+                        if (navQueue) {
+                            int evt = 1;
+                            xQueueSend(navQueue, &evt, 0);
+                            ESP_LOGI(TAG_TCP, "NAV_PLAN acionada (comando 'n')");
+                        }
+                        break;
+
+                    case 't':   // Teste — resposta simples
+                        ESP_LOGI(TAG_TCP, "Ping recebido ('t')");
+                        send(sock, "pong\n", 5, 0);
+                        break;
+
+                    default:
+                        // Ignora bytes de controle do Telnet (ÿ, etc)
+                        if (c >= 32 && c <= 126)
+                            ESP_LOGW(TAG_TCP, "Comando desconhecido: %c", c);
+                        break;
+                }
+            }
+        }
+
+        if (len <= 0) {
+            ESP_LOGW(TAG_TCP, "Cliente desconectado");
         }
         shutdown(sock, 0);
         close(sock);
