@@ -14,6 +14,8 @@
 #include <time.h>
 #include <sys/time.h>
 #include "lwip/sockets.h"
+#include <string.h>   // você usa strlen() no bloco TCP
+
 
 
 // ---------------- CONFIGURAÇÕES ----------------
@@ -30,7 +32,7 @@
 // ---------------- PROTOCOLO DE COMUNICAÇÃO ----------------
 #define PROTO_UDP   1
 #define PROTO_TCP   2
-#define SELECTED_PROTO PROTO_TCP   // <-- altere aqui para alternar entre UDP e TCP
+#define SELECTED_PROTO PROTO_UDP  // <-- altere aqui para alternar entre UDP e TCP
 
 #define FUS_IMU_PERIOD_MS 5
 
@@ -39,8 +41,9 @@
 #define DEADLINE_FS_TASK_US   10000
 #define DEADLINE_NAV_PLAN_US  20000
 
-#define REPORT_PC_IP     "192.168.15.17"   // <-- ajuste para o IP do seu PC
+#define REPORT_PC_IP     "192.168.15.5"   // <-- ajuste para o IP do seu PC
 #define REPORT_UDP_PORT  3333
+
 #if SELECTED_PROTO == PROTO_UDP
     #define REPORT_PROTO_STR "UDP" // campo informativo no JSON
 #elif SELECTED_PROTO == PROTO_TCP
@@ -110,7 +113,7 @@ static uint64_t ctrl_wcrt = 0;
 static uint64_t nav_wcrt = 0;
 
 static uint32_t last_pad_status = 0;
-QueueHandle_t navQueue;
+
 
 extern int tcp_client_sock;
 
@@ -131,7 +134,7 @@ void FUS_IMU(void *pvParameter) {
         uint64_t t_start = esp_timer_get_time();
 
         // --- Execução simulada ---
-        cargaCPU_us(500);
+        cargaCPU_us(1000);
 
         uint64_t t_end = esp_timer_get_time();
         uint64_t exec_time_us = t_end - t_start;
@@ -153,7 +156,7 @@ void CTRL_ATT(void *pvParameter) {
     while (1) {
         if (ulTaskNotifyTake(pdTRUE, portMAX_DELAY) > 0) {
             uint64_t t_start = esp_timer_get_time();
-            cargaCPU_us(500);
+            cargaCPU_us(800);
             uint64_t t_end = esp_timer_get_time();
             uint64_t exec_time_us = t_end - t_start;
             
@@ -191,7 +194,7 @@ void NAV_PLAN(void *pvParameter) {
             uint64_t t_start = esp_timer_get_time();
 
             // --- Simulação de carga ---
-            cargaCPU_us(2500);
+            cargaCPU_us(3500);
 
             uint64_t t_end = esp_timer_get_time();
             uint64_t exec_time_us = t_end - t_start;
@@ -233,7 +236,7 @@ void FS_TASK(void *pvParameter) {
     while (1) {
         if (ulTaskNotifyTake(pdTRUE, portMAX_DELAY) > 0) {
             uint64_t t_start = esp_timer_get_time();
-            cargaCPU_us(500);
+            cargaCPU_us(800);
             uint64_t t_end = esp_timer_get_time();
             uint64_t exec_time_us = t_end - t_start;
 
@@ -315,12 +318,12 @@ void MONITOR_TASK(void *pvParameters) {
             printf("=============================\n\n");
 
             // ====== MONITOR: zera acumuladores de latência e cpu_time para PRÓXIMA janela ======
-            stats.fus_lat_total_us = stats.ctrl_lat_total_us =
+            stats.fus_lat_total_us = stats.ctrl_lat_total_us = 0;
             stats.nav_lat_total_us = stats.fs_lat_total_us = 0;
-            stats.fus_lat_count = stats.ctrl_lat_count =
+            stats.fus_lat_count = stats.ctrl_lat_count = 0;
             stats.nav_lat_count = stats.fs_lat_count = 0;
 
-            cpu_time.fus_time_us = cpu_time.ctrl_time_us =
+            cpu_time.fus_time_us = cpu_time.ctrl_time_us = 0;
             cpu_time.nav_time_us = cpu_time.fs_time_us = 0;
 
             xSemaphoreGive(mutexStats);
@@ -402,19 +405,35 @@ void MONITOR_TASK(void *pvParameters) {
             fs_events,   fs_misses, (long long)avg_fs,
             cpu_pct
         );
-
         #if SELECTED_PROTO == PROTO_UDP
-            send_udp_message(json, REPORT_PC_IP, REPORT_UDP_PORT);
-            printf("[UDP] enviado para %s:%d | %s\n", REPORT_PC_IP, REPORT_UDP_PORT, json);
+        send_udp_message(json, REPORT_PC_IP, REPORT_UDP_PORT);
+        printf("[UDP] enviado para %s:%d | %s\n", REPORT_PC_IP, REPORT_UDP_PORT, json);
+
         #elif SELECTED_PROTO == PROTO_TCP
             if (tcp_client_sock > 0) {
+                // Marca tempo de envio
+                int64_t t_send_us = esp_timer_get_time();
+            
+                // Envia JSON
                 send(tcp_client_sock, json, strlen(json), 0);
                 printf("[TCP] enviado para cliente conectado | %s\n", json);
+            
+                // Aguarda resposta do servidor Python
+                char rx_buf[512];
+                int len = recv(tcp_client_sock, rx_buf, sizeof(rx_buf) - 1, MSG_DONTWAIT);
+            
+                if (len > 0) {
+                    rx_buf[len] = '\0';
+                    int64_t t_recv_us = esp_timer_get_time();
+                    double rtt_ms = (t_recv_us - t_send_us) / 1000.0;
+                    printf("[TCP] resposta recebida (%d bytes) | RTT = %.3f ms\n", len, rtt_ms);
+                } else {
+                    printf("[TCP] sem resposta ou timeout, RTT não calculado\n");
+                }
             } else {
                 printf("[TCP] Nenhum cliente conectado, pulando envio.\n");
             }
         #endif
-
 
         // --- fecha a janela do relatório e contabiliza o tempo da PRÓPRIA monitor_task ---
         int64_t t_end = esp_timer_get_time();

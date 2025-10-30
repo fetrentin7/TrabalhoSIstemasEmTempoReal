@@ -11,7 +11,7 @@ A porta, que nesse exemplo é 5000, pode ser alterada para qualquer número dent
 """
 import socket, json
 
-ESP_IP = "10.27.142.37"  # coloque o IP do seu ESP32
+ESP_IP = "192.168.15.44"  # coloque o IP do seu ESP32
 PORT   = 5000
 
 with socket.create_connection((ESP_IP, PORT), timeout=5) as s:

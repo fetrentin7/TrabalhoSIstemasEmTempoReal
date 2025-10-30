@@ -10,12 +10,24 @@ o IPv4 0.0.0.0 indica que o servidor irá escutar qualquer IP que enviar pacote 
 A porta, que nesse exemplo é 6010, pode ser alterada para qualquer número dentro do intervalo de 2^16.
 """
 import socket
+import json
+import time
 
-ADDR = ("0.0.0.0", 6010)
-
+ADDR = ("0.0.0.0", 3333)  # mesma porta usada no ESP32 (REPORT_UDP_PORT)
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.bind(ADDR)
-print("Aguardando UDP em", ADDR)
+
+print("Servidor UDP aguardando em", ADDR)
+
 while True:
     data, src = s.recvfrom(2048)
-    print("de", src, "=>", data.decode(errors="ignore"))
+    msg = data.decode(errors="ignore")
+
+    print(f"De {src} => {msg}")
+
+    ack = {
+        "ack": True,
+        "srv_time_us": int(time.time() * 1_000_000),
+    }
+    s.sendto(json.dumps(ack).encode(), src)
+    print(f"ACK enviado para {src}")

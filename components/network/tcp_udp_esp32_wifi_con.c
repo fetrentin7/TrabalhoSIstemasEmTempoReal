@@ -29,9 +29,10 @@ idf_component_register(SRCS "hello_world_main.c"
 
 #include "tcp_udp_esp32_wifi_con.h"
 #include "esp32_sntp_con.h"
+#include "esp_timer.h"
 
 
-#define WIFI_SSID "fernando"
+#define WIFI_SSID "Fernando"
 #define WIFI_PASS "fernando123"
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT      BIT1
@@ -134,26 +135,48 @@ esp_err_t send_udp_message(const char *msg, const char *ip, int port)
     dest.sin_port = htons(port);
 
     if (inet_pton(AF_INET, ip, &dest.sin_addr.s_addr) != 1) {
-        ESP_LOGE(TAG, "IP inválido: %s", ip);
+        ESP_LOGE("UDP", "IP inválido: %s", ip);
         return ESP_FAIL;
     }
 
     int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
     if (sock < 0) {
-        ESP_LOGE(TAG, "Erro ao criar socket UDP");
+        ESP_LOGE("UDP", "Erro ao criar socket UDP");
         return ESP_FAIL;
     }
 
-    ssize_t sent = sendto(sock, msg, strlen(msg), 0,
-                          (struct sockaddr *)&dest, sizeof(dest));
+    // --- envia ---
+    int64_t t_send_us = esp_timer_get_time();
+    ssize_t sent = sendto(sock, msg, strlen(msg), 0, (struct sockaddr *)&dest, sizeof(dest));
+
+    if (sent < 0) {
+        ESP_LOGE("UDP", "Falha no envio para %s:%d", ip, port);
+        close(sock);
+        return ESP_FAIL;
+    }
+
+    // --- espera resposta (ACK) ---
+    struct timeval timeout = { .tv_sec = 1, .tv_usec = 0 }; // 1s timeout
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+
+    char rx_buf[256];
+    struct sockaddr_in source_addr;
+    socklen_t socklen = sizeof(source_addr);
+
+    ssize_t len = recvfrom(sock, rx_buf, sizeof(rx_buf) - 1, 0,
+                           (struct sockaddr *)&source_addr, &socklen);
+
+    int64_t t_recv_us = esp_timer_get_time();
+
+    if (len > 0) {
+        rx_buf[len] = '\0';
+        double rtt_ms = (t_recv_us - t_send_us) / 1000.0;
+        ESP_LOGI("UDP", "ACK recebido (%d bytes) | RTT = %.3f ms | Conteúdo: %s", (int)len, rtt_ms, rx_buf);
+    } else {
+        ESP_LOGW("UDP", "Sem resposta (timeout) — pacote enviado mas sem ACK");
+    }
 
     close(sock);
-    if (sent < 0) {
-        ESP_LOGE(TAG, "Erro ao enviar UDP para %s:%d", ip, port);
-        return ESP_FAIL;
-    }
-
-    // sucesso
     return ESP_OK;
 }
 

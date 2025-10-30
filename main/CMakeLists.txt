@@ -1,6 +1,6 @@
 idf_component_register(
-    SRCS 
+    SRCS
         "hello_world_main.c"
     INCLUDE_DIRS "."
-    REQUIRES driver esp_timer freertos network
+    REQUIRES driver freertos esp_timer network
 )

@@ -29,6 +29,7 @@ void time_sync_notification_cb(struct timeval *tv) {
 
 void time_sync_init(void)
 {
+    ESP_LOGI(TAG, "Aguardando Wi-Fi para iniciar SNTP...");
     if (!wifi_wait_connected()) {
         ESP_LOGE(TAG, "Wi-Fi não conectou após 15s, abortando SNTP");
         return;
@@ -36,17 +37,19 @@ void time_sync_init(void)
 
     ESP_LOGI(TAG, "Wi-Fi conectado! Iniciando SNTP...");
 
-    setenv("TZ", "BRT3", 1);
+    setenv("TZ", "BRT3BRST,M10.3.0/0,M2.3.0/0", 1);
     tzset();
 
-    sntp_setoperatingmode(SNTP_OPMODE_POLL);
-    sntp_set_time_sync_notification_cb(time_sync_notification_cb);
-    sntp_setservername(0, "a.st1.ntp.br");
-    sntp_setservername(1, "b.st1.ntp.br");
-    sntp_setservername(2, "pool.ntp.org");
-    sntp_init();
+    esp_sntp_stop(); // força reinício do cliente SNTP, se já estiver rodando
+    esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    esp_sntp_setservername(0, "a.ntp.br");
+    esp_sntp_setservername(1, "b.ntp.br");
+    esp_sntp_setservername(2, "pool.ntp.org");
+    esp_sntp_set_time_sync_notification_cb(time_sync_notification_cb);
+    esp_sntp_init();
 
-    for (int i = 0; i < 20; ++i) {
+    // Espera até sincronizar
+    for (int i = 0; i < 40; ++i) {  // aumenta tempo de espera
         time_t now;
         struct tm timeinfo = {0};
         time(&now);
@@ -54,11 +57,12 @@ void time_sync_init(void)
         if (timeinfo.tm_year > (2016 - 1900)) {
             char buf[64];
             strftime(buf, sizeof(buf), "%d/%m/%Y %H:%M:%S", &timeinfo);
-            ESP_LOGI(TAG, "Hora sincronizada: %s", buf);
+            ESP_LOGI(TAG, "✅ Hora sincronizada com sucesso: %s", buf);
             return;
         }
-        vTaskDelay(pdMS_TO_TICKS(500));
+        ESP_LOGW(TAG, "Aguardando sincronização SNTP... (%d)", i);
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 
-    ESP_LOGW(TAG, "SNTP não sincronizou dentro do tempo esperado");
+    ESP_LOGE(TAG, "⛔ SNTP não sincronizou dentro do tempo esperado!");
 }
